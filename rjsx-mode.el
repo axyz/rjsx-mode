@@ -52,13 +52,24 @@ parsing supports the magic `rjsx-electric-lt' and
   :group 'rjsx-mode)
 
 ;;;###autoload
+(define-minor-mode rjsx-minor-mode
+  "Minor mode for JSX AST parsing"
+  :group 'rjsx-mode
+  :lighter " jsx "
+  (if (derived-mode-p 'rjsx-mode)
+      (setq rjsx-minor-mode nil)
+    (if rjsx-minor-mode
+        (js2-minor-mode-enter)
+      (js2-minor-mode-exit))))
+
+;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.jsx\\'" . rjsx-mode))
 
 (defun rjsx-parse-xml-initializer (orig-fun)
   "Dispatch the xml parser based on variable `rjsx-mode' being active or not.
 This function is used to advise `js2-parse-xml-initializer' (ORIG-FUN) using
 the `:around' combinator.  JS2-PARSER is the original XML parser."
-  (if (eq major-mode 'rjsx-mode)
+  (if (or (eq major-mode 'rjsx-mode) (member 'rjsx-minor-mode minor-mode-list))
       (rjsx-parse-top-xml)
     (apply orig-fun nil)))
 
