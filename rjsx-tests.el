@@ -12,6 +12,7 @@
 (require 'rjsx-mode)
 (require 'cl-lib)
 (require 'ert)
+(require 'ert-x)
 
 (defun js2-mode--and-parse ()  ;; No point in advising, so we just overwrite this internal function
   (rjsx-mode)
@@ -971,5 +972,99 @@ Currently only forms with syntax errors are supported.
     (setq js2-mode-ast nil)
     (let ((rjsx-max-size-for-frequent-reparse (1- (point-max))))
       (should-error (rjsx--tag-at-point)))))
+
+
+
+
+
+
+
+
+;;; TEST FOR RJSX MINOR MODE
+
+(defun rjsx-mode--and-parse ()
+  (setq-local rjsx-jsx-enabled-p t)
+  (js2-minor-mode)
+  (js2-reparse))
+
+(defun rjsx-test-string-to-ast (s)
+  (insert s)
+  (rjsx-mode--and-parse)
+  (should (null js2-mode-buffer-dirty-p))
+  js2-mode-ast)
+
+(cl-defun rjsx-test-parse-string (code-string &key syntax-error errors-count
+                                             reference warnings-count)
+  (ert-with-test-buffer (:name 'origin)
+    (let ((ast (rjsx-test-string-to-ast code-string)))
+      (if syntax-error
+          (let ((errors (js2-ast-root-errors ast)))
+            (should (= (or errors-count 1) (length errors)))
+            (cl-destructuring-bind (_ pos len) (car (last errors))
+              (should (string= syntax-error (substring (concat code-string "")
+                                                       (1- pos) (+ pos len -1))))))
+        (should (= 0 (length (js2-ast-root-errors ast))))
+        (ert-with-test-buffer (:name 'copy)
+          (js2-print-tree ast)
+          (skip-chars-backward " \t\n")
+          (should (string= (or reference code-string)
+                           (buffer-substring-no-properties
+                            (point-min) (point)))))
+        (should (= (or warnings-count 0)
+                   (length (js2-ast-root-warnings ast))))))))
+
+
+
+(cl-defmacro rjsx-deftest-parse (name code-string &key bind syntax-error errors-count
+                                      reference warnings-count)
+  "Parse CODE-STRING.  If SYNTAX-ERROR is nil, print syntax tree
+with `js2-print-tree' and assert the result to be equal to
+REFERENCE, if present, or the original string.  If SYNTAX-ERROR
+is passed, expect syntax error highlighting substring equal to
+SYNTAX-ERROR value.  BIND defines bindings to apply them around
+the test."
+  (declare (indent defun))
+  `(ert-deftest ,(intern (format "rjsx-%s" name)) ()
+     (let ,(append bind '((js2-basic-offset 2)))
+       (rjsx-test-parse-string ,code-string
+                              :syntax-error ,syntax-error
+                              :errors-count ,errors-count
+                              :warnings-count ,warnings-count
+                              :reference ,reference))))
+
+(rjsx-deftest-parse sample-jsx
+  "<div className={'foo'}>hello</div>;")
+
+(rjsx-deftest-parse sample-jsx-cx-undeclared
+  "<div className={cx('foo', {'bar': true})}>hello</div>;"
+  :warnings-count 1)
+
+(rjsx-deftest-parse complex
+  "<form onSubmit={this.handleSubmit} className={className}>
+  <input type=\"text\"
+         onChange={this.getChangeHandler(\"name\")}
+         placeholder=\"Project name\"
+         className={errors.name ? \"invalid\" : \"\"}
+         ref={c => this._topInput = c}/>
+    {errors.name && <span className=\"error\">{errors.name}</span>}
+    {   } Empty is OK as child, but warning is issued
+    <Undeclared value={123}/>
+    {/* Node with comment gets no warning */}
+    hello <div { } /> This should be a spread, so error
+    <div empty={}  /> Empty attributes are not allowed
+    {React.Children.count(this.props.children) === 1
+        ? <OnlyChild {...this.props}>{this.props.children}</OnlyChild>
+        : React.Children.map(this.props.children, (child, index) => (
+            <li key={index} undefinedProp={notDefined}>
+              {index === 0 && <span className=\"first\"/>}
+              {React.cloneElement(child, {toolTip: <Tooltip index={index} />})}
+            </li>
+        ))
+    }
+</form>"
+  :errors-count 2
+  :warnings-count 2
+  :syntax-error "{ }")
+
 
 ;;; rjsx-tests.el ends here
